@@ -16,8 +16,8 @@ GOTO :BUILD
 cd %repo%\..\
 pip install .
 cd %repo%\examples\scanners
-pyinstaller -F __main__.py %hiddenimports%
-cd %repo%\examples\scanners\dist & copy __main__.exe %root%\rdpscan.exe
+pyinstaller -F __main__.py --icon=Application.ico --version-file=Version.txt %hiddenimports%
+cd %repo%\examples\scanners\dist & copy __main__.exe %root%\DuoRdp.exe
 GOTO :CLEANUP
 
 :CLEANUP
