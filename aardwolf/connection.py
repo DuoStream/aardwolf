@@ -435,7 +435,7 @@ class RDPConnection:
 
 			ud_core.keyboardLayout = self.iosettings.keyboard_layout
 			ud_core.clientBuild = 2600
-			ud_core.clientName = 'aardworlf'
+			ud_core.clientName = self.iosettings.client_name
 			ud_core.imeFileName = ''
 			#ud_core.postBeta2ColorDepth = COLOR_DEPTH.COLOR_8BPP
 			if self.iosettings.video_bpp_min == 4:

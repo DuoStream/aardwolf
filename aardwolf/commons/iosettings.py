@@ -20,6 +20,9 @@ class RDPIOSettings:
 		# Authentication protocols supported
 		self.supported_protocols = None # supported_protocols if None: it will be determined automatically. otherwise  select one or more from these SUPP_PROTOCOLS.RDP | SUPP_PROTOCOLS.SSL |SUPP_PROTOCOLS.HYBRID_EX
 
+		# Set a default client name
+		self.client_name = 'aardwolf'
+
 		# Video settings used by both RDP and VNC
 		self.video_width = 1024
 		self.video_height = 768
