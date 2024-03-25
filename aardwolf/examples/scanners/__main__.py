@@ -1,117 +1,73 @@
-
+import io
 import asyncio
-import logging
+import argparse
+import ctypes
+import struct
+import sys
+from urllib.parse import quote
 from aardwolf.commons.factory import RDPConnectionFactory
-from aardwolf.commons.queuedata.constants import VIDEO_FORMAT
 from aardwolf.commons.iosettings import RDPIOSettings
-from asysocks.unicomm.common.scanner.targetgen import UniTargetGen
-from asysocks.unicomm.common.scanner.scanner import UniScanner
-from aardwolf import logger
-
-from asysocks.unicomm.common.target import UniTarget
-from asyauth.common.credentials import UniCredential
-
-
-from aardwolf.examples.scanners.rdplogin import RDPLoginScanner
-from aardwolf.examples.scanners.rdpscaps import RDPCapabilitiesScanner
-from aardwolf.examples.scanners.rdpscreen import RDPScreenshotScanner
-
-rdpscan_options = {
-	'login' : (RDPLoginScanner,'Checks if user can log in to hosts'),
-	'caps'  : (RDPCapabilitiesScanner,'Lists RDP connection flags available'),
-	'screen': (RDPScreenshotScanner,'Takes screenshot of the remote session'),
-}
+from aardwolf.commons.queuedata.constants import VIDEO_FORMAT
+from aardwolf.commons.target import RDPTarget, RDPConnectionDialect
+from aardwolf.protocol.T125.extendedinfopacket import PERF
+from asyauth.common.constants import asyauthSecret
+from asyauth.common.credentials.ntlm import NTLMCredential
+from asyauth.common.subprotocols import SubProtocolNative
+from asysocks.unicomm.common.target import UniProto
 
 async def amain():
-	import argparse
-
-	protocols = """RDP : RDP protocol
-	VNC: VNC protocol"""
-	authprotos = """ntlm     : CREDSSP+NTLM authentication
-	kerberos : CREDSSP+Kerberos authentication
-	sspi-ntlm: CREDSSP+NTLM authentication using current user's creds (Windows only, restricted admin mode only)
-	sspi-kerberos: CREDSSP+KERBEROS authentication using current user's creds (Windows only, restricted admin mode only)
-	plain    : Old username and password authentication (only works when NLA is disabled on the server)
-	none     : No authentication (same as plain, but no provided credentials needed)
-	"""
-	usage = UniCredential.get_help(protocols, authprotos, '')
-	usage += UniTarget.get_help()
-	usage += """
-RDP Examples:
-	Login with no credentials (only works when NLA is disabled on the server):
-		rdp://10.10.10.2
-	Login with username and password (only works when NLA is disabled on the server):
-		rdp://TEST\Administrator:Passw0rd!1@10.10.10.2
-	Login via CREDSSP+NTLM:
-		rdp+ntlm-password://TEST\Administrator:Passw0rd!1@10.10.10.2
-	Login via CREDSSP+Kerberos:
-		rdp+kerberos-password://TEST\Administrator:Passw0rd!1@win2019ad.test.corp/?dc=10.10.10.2
-	Login via CREDSSP+NTLM using current user's creds (Windows only, restricted admin mode only):
-		rdp+sspi-ntlm://win2019ad.test.corp
-	Login via CREDSSP+Kerberos using current user's creds (Windows only, restricted admin mode only):
-		rdp+sspi-kerberos://win2019ad.test.corp/
-	
-VNC examples:
-	Login with no credentials:
-		vnc://10.10.10.2
-	Login with password (the short way):
-		vnc://Passw0rd!1@10.10.10.2
-	Login with password:
-		vnc+plain-password://Passw0rd!1@10.10.10.2
-"""
-
-	scannertpes_usage = '\r\nall: Runs all scanners\r\n'
-	for k in rdpscan_options:
-		scannertpes_usage += '    %s: %s\r\n' % (k, rdpscan_options[k][1])
-	
-	usage += """
-Scanner types (-s param):
-    %s
-"""% scannertpes_usage
-
-	parser = argparse.ArgumentParser(description='RDP scanner', usage=usage)
-	parser.add_argument('-w', '--worker-count', type=int, default=100, help='Parallell count')
-	parser.add_argument('-t', '--timeout', type=int, default=10, help='Timeout for each connection')
-	parser.add_argument('--no-progress', action='store_false', help='Disable progress bar')
-	parser.add_argument('-o', '--out-file', help='Output file path.')
-	parser.add_argument('-s', '--scan', action='append', required=True, help='Scanner type')
-	parser.add_argument('-e', '--errors', action='store_true', help='Includes errors in output. It will mess up the formatting!')
-	parser.add_argument('url', help = 'Connection string in URL format')
-	parser.add_argument('targets', nargs='*', help = 'Hostname or IP address or file with a list of targets')
+	# Parse the arguments
+	parser = argparse.ArgumentParser(description="RDP Connection Parameters")
+	parser.add_argument("ip_address", help="IP address of the remote computer")
+	parser.add_argument("client_name", help="Client name")
+	parser.add_argument("username", help="Username")
+	parser.add_argument("password", help="Password")
+	parser.add_argument("keyboard_layout", type=int, help="Keyboard layout")
+	parser.add_argument("width", type=int, help="Screen width")
+	parser.add_argument("height", type=int, help="Screen height")
 	args = parser.parse_args()
 
-	if len(args.targets) == 0:
-		print('No targets defined!')
-		return
-	
-	logger.setLevel(logging.INFO)
-
+	# Establish a headless RDP connection
 	iosettings = RDPIOSettings()
+	iosettings.client_name = args.client_name
 	iosettings.channels = []
-	iosettings.video_out_format = VIDEO_FORMAT.RAW
+	iosettings.keyboard_layout = args.keyboard_layout
+	iosettings.video_width = args.width
+	iosettings.video_height = args.height
+	iosettings.video_bpp_min = 24
+	iosettings.video_bpp_max = 32
+	iosettings.video_out_format = VIDEO_FORMAT.PIL
 	iosettings.clipboard_use_pyperclip = False
-	
-	connectionfactory = RDPConnectionFactory.from_url(args.url, iosettings)
-	scantypes = []
-	for x in args.scan:
-		scantypes.append(x.lower())
-	executors = []
-	if 'all' in scantypes:
-		for k in rdpscan_options:
-			executors.append(rdpscan_options[k][0](connectionfactory))
-	else:
-		for scantype in scantypes:
-			if scantype not in rdpscan_options:
-				print('Unknown scan type: "%s"' % scantype)
-				return
-			executors.append(rdpscan_options[scantype][0](connectionfactory))
-		
-	tgen = UniTargetGen.from_list(args.targets)
-	scanner = UniScanner('RDPScanner', executors, [tgen], worker_count=args.worker_count, host_timeout=args.timeout)
-	await scanner.scan_and_process(progress=args.no_progress, out_file=args.out_file, include_errors=args.errors)
+	iosettings.performance_flags = PERF.ENABLE_FONT_SMOOTHING | PERF.ENABLE_DESKTOP_COMPOSITION
+	target = RDPTarget(args.ip_address, 3389, None, 5, None, None, None, UniProto.CLIENT_TCP, False, RDPConnectionDialect.RDP, None)
+	credential = NTLMCredential(args.password, args.username, None, asyauthSecret.PASSWORD, SubProtocolNative())
+	factory = RDPConnectionFactory(iosettings, target, credential)
+	connection = None
+	try:
+		connection = factory.get_connection(iosettings)
+		err = await connection.connect()
+		if err is not None:
+			if not err[0]:
+				raise err[1];
+			while True:
+				if connection.disconnected_evt.is_set():
+					break
+				data = await connection.ext_out_queue.get()
+	except asyncio.CancelledError:
+		return
+	except Exception as e:
+		raise
+	finally:
+		if connection is not None:
+			await connection.terminate()
 
 def main():
-	asyncio.run(amain())
+	try:
+		asyncio.run(amain())
+		sys.exit(0)
+	except Exception as e:
+		raise e
+		sys.exit(1)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
 	main()
