@@ -706,6 +706,10 @@ class RDPConnection:
 			info = TS_INFO_PACKET()
 			info.CodePage = 0
 			info.flags = INFO_FLAG.ENABLEWINDOWSKEY|INFO_FLAG.MAXIMIZESHELL|INFO_FLAG.UNICODE|INFO_FLAG.DISABLECTRLALTDEL|INFO_FLAG.MOUSE
+			# DuoMic prototype: advertise microphone redirection only when the
+			# explicitly selected instance has an AUDIO_INPUT channel handler.
+			if getattr(self.iosettings, 'audio_capture', False):
+				info.flags |= INFO_FLAG.AUDIOCAPTURE
 			info.Domain = ''
 			info.UserName = ''
 			info.Password = ''
