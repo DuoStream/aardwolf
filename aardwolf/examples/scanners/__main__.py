@@ -5,7 +5,8 @@ import ctypes
 import struct
 import sys
 from urllib.parse import quote
-from aardwolf.commons.factory import RDPConnectionFactory
+from aardwolf.connection import RDPConnection
+from aardwolf.extensions.duomic import configure_microphone
 from aardwolf.commons.iosettings import RDPIOSettings
 from aardwolf.commons.queuedata.constants import VIDEO_FORMAT
 from aardwolf.commons.target import RDPTarget, RDPConnectionDialect
@@ -42,10 +43,12 @@ async def amain():
 	iosettings.performance_flags = PERF.ENABLE_FONT_SMOOTHING | PERF.ENABLE_DESKTOP_COMPOSITION
 	target = RDPTarget(args.ip_address, args.port, None, 5, None, None, None, UniProto.CLIENT_TCP, False, RDPConnectionDialect.RDP, None)
 	credential = NTLMCredential(args.password, args.username, None, asyauthSecret.PASSWORD, SubProtocolNative())
-	factory = RDPConnectionFactory(iosettings, target, credential)
 	connection = None
+	microphone = None
 	try:
-		connection = factory.get_connection(iosettings)
+		microphone = configure_microphone(iosettings, args.username)
+		# A live microphone owns locks and must not be deep-copied by the factory.
+		connection = RDPConnection(target, credential, iosettings)
 		err = await connection.connect()
 		if err is not None:
 			if not err[0]:
@@ -53,14 +56,23 @@ async def amain():
 			while True:
 				if connection.disconnected_evt.is_set():
 					break
-				data = await connection.ext_out_queue.get()
+				try:
+					await asyncio.wait_for(connection.ext_out_queue.get(), timeout=1)
+				except asyncio.TimeoutError:
+					pass
 	except asyncio.CancelledError:
 		return
 	except Exception as e:
 		raise
 	finally:
-		if connection is not None:
-			await connection.terminate()
+		try:
+			if microphone is not None:
+				await microphone.channel_closed()
+		finally:
+			if microphone is not None:
+				microphone.audio.close()
+			if connection is not None:
+				await connection.terminate()
 
 def main():
 	try:
